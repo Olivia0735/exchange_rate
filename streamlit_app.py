@@ -53,7 +53,7 @@ st.sidebar.header("Model Configuration")
 @st.cache_data
 def load_and_preprocess_data():
     # Load cleaned data
-    df = pd.read_csv("SAR_USD_clean.csv")
+    df = pd.read_csv("SAR_USD_clean.pkl")
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     
