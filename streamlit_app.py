@@ -10,20 +10,21 @@ from sklearn.metrics import mean_squared_error, r2_score
 # App title
 # --------------------------------------------------
 st.title("SAR–USD Exchange Rate Prediction")
-st.markdown("Random Forest model using lag, momentum, and volatility features")
+st.markdown("Random Forest model with lag, momentum, and volatility features")
 
 # --------------------------------------------------
-# Load cleaned SAR data
+# 1. Load cleaned SAR data (PKL FILE)
 # --------------------------------------------------
-df = pd.read_csv("SAR_USD_clean.pkl")
+df = pd.read_pickle("SAR_USD_clean.pkl")
+
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date").reset_index(drop=True)
 
-# Filter recent regime
+# Keep only recent regime (2015–2022)
 df = df[(df["Date"] >= "2015-01-01") & (df["Date"] <= "2022-12-31")].reset_index(drop=True)
 
 # --------------------------------------------------
-# Feature engineering
+# 2. Feature engineering
 # --------------------------------------------------
 df["lag_1"]  = df["SAR=X"].shift(1)
 df["lag_7"]  = df["SAR=X"].shift(7)
@@ -40,6 +41,9 @@ df["std_30"] = df["SAR=X"].rolling(30).std()
 
 df = df.dropna().reset_index(drop=True)
 
+# --------------------------------------------------
+# 3. Define features and target
+# --------------------------------------------------
 features = [
     "lag_1", "lag_7", "lag_30",
     "roll_7", "roll_30",
@@ -51,14 +55,15 @@ X = df[features]
 y = df["SAR=X"]
 
 # --------------------------------------------------
-# Train / validation split
+# 4. Time-based train / validation split
 # --------------------------------------------------
 split = int(len(df) * 0.8)
+
 X_train, X_val = X.iloc[:split], X.iloc[split:]
 y_train, y_val = y.iloc[:split], y.iloc[split:]
 
 # --------------------------------------------------
-# Train model
+# 5. Train model
 # --------------------------------------------------
 model = RandomForestRegressor(
     n_estimators=800,
@@ -67,10 +72,11 @@ model = RandomForestRegressor(
     random_state=42,
     n_jobs=-1
 )
+
 model.fit(X_train, y_train)
 
 # --------------------------------------------------
-# Evaluation
+# 6. Evaluation
 # --------------------------------------------------
 y_pred = model.predict(X_val)
 
@@ -82,7 +88,7 @@ st.metric("Mean Squared Error (MSE)", f"{mse:.8f}")
 st.metric("R² Score", f"{r2:.3f}")
 
 # --------------------------------------------------
-# Actual vs Predicted Plot
+# 7. Actual vs Predicted Plot
 # --------------------------------------------------
 st.subheader("Actual vs Predicted SAR")
 
@@ -94,7 +100,7 @@ ax.legend()
 st.pyplot(fig)
 
 # --------------------------------------------------
-# Feature Importance
+# 8. Feature Importance
 # --------------------------------------------------
 st.subheader("Feature Importance")
 
@@ -106,34 +112,34 @@ importance = pd.DataFrame({
 st.bar_chart(importance.set_index("Feature"))
 
 # --------------------------------------------------
-# Forecast next year (252 trading days)
+# 9. Forecast next year (252 trading days)
 # --------------------------------------------------
-st.subheader("Forecast: Next Year (2023)")
+st.subheader("Forecast for Next Year (2023)")
 
-last_row = df.iloc[-1][features].values.reshape(1, -1)
+last_features = df.iloc[-1][features].values.reshape(1, -1)
 
-future_predictions = []
-current_features = last_row.copy()
+future_preds = []
+current = last_features.copy()
 
 for _ in range(252):
-    next_pred = model.predict(current_features)[0]
-    future_predictions.append(next_pred)
+    next_val = model.predict(current)[0]
+    future_preds.append(next_val)
 
-    # Shift lag features
-    current_features[0, 2] = current_features[0, 1]
-    current_features[0, 1] = current_features[0, 0]
-    current_features[0, 0] = next_pred
+    # Update lag features
+    current[0, 2] = current[0, 1]
+    current[0, 1] = current[0, 0]
+    current[0, 0] = next_val
 
-# Display forecast
-st.write("Average predicted SAR for 2023:")
-st.success(f"{np.mean(future_predictions):.4f} SAR per USD")
+st.success(f"Average predicted SAR (2023): {np.mean(future_preds):.4f}")
 
 # --------------------------------------------------
-# Show sample data
+# 10. Sample predictions table
 # --------------------------------------------------
 st.subheader("Sample Predictions")
+
 preview = pd.DataFrame({
     "Actual SAR": y_val.values[:10],
     "Predicted SAR": y_pred[:10]
 })
+
 st.dataframe(preview)
