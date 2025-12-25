@@ -3,14 +3,13 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-import matplotlib.pyplot as plt
 
 # -------------------------------
-# 1. Load dataset
+# 1. Load dataset (pickle)
 # -------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("exchange_data.csv")
+    df = pd.read_pickle("SAR_USD_clean.pkl")  # Use your uploaded pickle
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     return df
@@ -35,7 +34,7 @@ st.subheader(f"📈 {currency} Historical Rates ({first_year}-{latest_year})")
 st.line_chart(hist_df.set_index("Date")[currency])
 
 # -------------------------------
-# 4. Feature engineering (lags, rolling, momentum, volatility)
+# 4. Feature engineering
 # -------------------------------
 data = df[["Date", currency]].copy()
 data = data.sort_values("Date").reset_index(drop=True)
@@ -56,7 +55,7 @@ X = data[features]
 y = data[currency]
 
 # -------------------------------
-# 5. Train/test split (time-based)
+# 5. Train/test split
 # -------------------------------
 split = int(len(data)*0.8)
 X_train, X_val = X.iloc[:split], X.iloc[split:]
@@ -85,28 +84,26 @@ st.subheader("📊 Model Performance")
 st.write(f"MSE: {mse:.6f}")
 st.write(f"R²: {r2:.4f}")
 
-# Plot actual vs predicted
-fig, ax = plt.subplots(figsize=(10,5))
-ax.plot(data["Date"].iloc[split:], y_val, label="Actual")
-ax.plot(data["Date"].iloc[split:], y_pred, label="Predicted")
-ax.set_title(f"{currency} Actual vs Predicted")
-ax.set_xlabel("Date")
-ax.set_ylabel(f"{currency} rate")
-ax.legend()
-st.pyplot(fig)
+# Streamlit line chart for actual vs predicted
+compare_df = pd.DataFrame({
+    "Date": data["Date"].iloc[split:],
+    "Actual": y_val.values,
+    "Predicted": y_pred
+}).set_index("Date")
+st.line_chart(compare_df)
 
 # -------------------------------
 # 8. Predict next year's rate
 # -------------------------------
-# Use last available features
 last_row = X.iloc[-1].copy()
-
 predictions = []
-for _ in range(12):  # monthly forecast for next year
+
+# Generate next 12 months
+future_dates = pd.date_range(data["Date"].iloc[-1] + pd.Timedelta(days=1), periods=12, freq='M')
+for _ in range(12):
     pred = model.predict([last_row])[0]
     predictions.append(pred)
-    
-    # Update last_row features with new prediction (simple recursive)
+    # Update features for next prediction
     last_row["lag_1"] = pred
     last_row["lag_7"] = pred
     last_row["lag_30"] = pred
@@ -117,6 +114,7 @@ for _ in range(12):  # monthly forecast for next year
     last_row["std_7"] = 0
     last_row["std_30"] = 0
 
-st.subheader("🔮 Predicted Next Year")
+st.subheader("🔮 Predicted Next Year (12 months)")
+future_df = pd.DataFrame({"Date": future_dates, "Predicted": predictions}).set_index("Date")
+st.line_chart(future_df)
 st.write(f"Average predicted {currency} rate: {np.mean(predictions):.4f}")
-st.line_chart(predictions)
