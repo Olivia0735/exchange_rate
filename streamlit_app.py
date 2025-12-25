@@ -1,30 +1,42 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
-# --------------------------------------------------
-# App title
-# --------------------------------------------------
-st.title("SAR–USD Exchange Rate Prediction")
-st.markdown("Random Forest model with lag, momentum, and volatility features")
+st.set_page_config(page_title="SAR–USD Exchange Rate Model", layout="wide")
+
+st.title("💱 SAR–USD Exchange Rate Prediction (ML Model)")
 
 # --------------------------------------------------
-# 1. Load cleaned SAR data (PKL FILE)
+# Load data safely
 # --------------------------------------------------
-df = pd.read_pickle("SAR_USD_clean.pkl")
+@st.cache_data
+def load_data():
+    df = pd.read_pickle("SAR_USD_clean.pkl")
 
-df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values("Date").reset_index(drop=True)
+    # If Date is index, convert it
+    if "Date" not in df.columns:
+        df = df.reset_index()
 
-# Keep only recent regime (2015–2022)
-df = df[(df["Date"] >= "2015-01-01") & (df["Date"] <= "2022-12-31")].reset_index(drop=True)
+    # Standardize column names
+    df.rename(columns={"index": "Date"}, inplace=True)
+
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+
+    # Use stable regime
+    df = df[(df["Date"] >= "2015-01-01") & (df["Date"] <= "2022-12-31")]
+
+    return df.reset_index(drop=True)
+
+df = load_data()
+
+st.subheader("📊 Dataset Preview")
+st.dataframe(df.head())
 
 # --------------------------------------------------
-# 2. Feature engineering
+# Feature Engineering
 # --------------------------------------------------
 df["lag_1"]  = df["SAR=X"].shift(1)
 df["lag_7"]  = df["SAR=X"].shift(7)
@@ -41,9 +53,6 @@ df["std_30"] = df["SAR=X"].rolling(30).std()
 
 df = df.dropna().reset_index(drop=True)
 
-# --------------------------------------------------
-# 3. Define features and target
-# --------------------------------------------------
 features = [
     "lag_1", "lag_7", "lag_30",
     "roll_7", "roll_30",
@@ -55,91 +64,96 @@ X = df[features]
 y = df["SAR=X"]
 
 # --------------------------------------------------
-# 4. Time-based train / validation split
+# Train / Validation split
 # --------------------------------------------------
 split = int(len(df) * 0.8)
-
 X_train, X_val = X.iloc[:split], X.iloc[split:]
 y_train, y_val = y.iloc[:split], y.iloc[split:]
 
 # --------------------------------------------------
-# 5. Train model
+# Train Model
 # --------------------------------------------------
-model = RandomForestRegressor(
-    n_estimators=800,
-    max_depth=20,
-    min_samples_leaf=3,
-    random_state=42,
-    n_jobs=-1
-)
+@st.cache_resource
+def train_model(X_train, y_train):
+    model = RandomForestRegressor(
+        n_estimators=800,
+        max_depth=20,
+        min_samples_leaf=3,
+        random_state=42,
+        n_jobs=-1
+    )
+    model.fit(X_train, y_train)
+    return model
 
-model.fit(X_train, y_train)
+model = train_model(X_train, y_train)
 
 # --------------------------------------------------
-# 6. Evaluation
+# Evaluation
 # --------------------------------------------------
 y_pred = model.predict(X_val)
 
 mse = mean_squared_error(y_val, y_pred)
 r2 = r2_score(y_val, y_pred)
 
-st.subheader("Model Accuracy")
-st.metric("Mean Squared Error (MSE)", f"{mse:.8f}")
-st.metric("R² Score", f"{r2:.3f}")
+st.subheader("📈 Model Performance")
+col1, col2 = st.columns(2)
+col1.metric("MSE", f"{mse:.8f}")
+col2.metric("R² Score", f"{r2:.4f}")
 
 # --------------------------------------------------
-# 7. Actual vs Predicted Plot
+# Actual vs Predicted Table
 # --------------------------------------------------
-st.subheader("Actual vs Predicted SAR")
-
-fig, ax = plt.subplots()
-ax.plot(y_val.values[:200], label="Actual")
-ax.plot(y_pred[:200], label="Predicted")
-ax.set_ylabel("SAR per USD")
-ax.legend()
-st.pyplot(fig)
-
-# --------------------------------------------------
-# 8. Feature Importance
-# --------------------------------------------------
-st.subheader("Feature Importance")
-
-importance = pd.DataFrame({
-    "Feature": features,
-    "Importance": model.feature_importances_
-}).sort_values("Importance", ascending=False)
-
-st.bar_chart(importance.set_index("Feature"))
-
-# --------------------------------------------------
-# 9. Forecast next year (252 trading days)
-# --------------------------------------------------
-st.subheader("Forecast for Next Year (2023)")
-
-last_features = df.iloc[-1][features].values.reshape(1, -1)
-
-future_preds = []
-current = last_features.copy()
-
-for _ in range(252):
-    next_val = model.predict(current)[0]
-    future_preds.append(next_val)
-
-    # Update lag features
-    current[0, 2] = current[0, 1]
-    current[0, 1] = current[0, 0]
-    current[0, 0] = next_val
-
-st.success(f"Average predicted SAR (2023): {np.mean(future_preds):.4f}")
-
-# --------------------------------------------------
-# 10. Sample predictions table
-# --------------------------------------------------
-st.subheader("Sample Predictions")
-
-preview = pd.DataFrame({
-    "Actual SAR": y_val.values[:10],
-    "Predicted SAR": y_pred[:10]
+results = pd.DataFrame({
+    "Date": df["Date"].iloc[split:].values,
+    "Actual SAR": y_val.values,
+    "Predicted SAR": y_pred
 })
 
-st.dataframe(preview)
+st.subheader("📋 Actual vs Predicted")
+st.dataframe(results.head(20))
+
+# --------------------------------------------------
+# Line Chart
+# --------------------------------------------------
+st.subheader("📉 Prediction Visualization")
+st.line_chart(results.set_index("Date")[["Actual SAR", "Predicted SAR"]])
+
+# --------------------------------------------------
+# Next 1-Year Forecast (Iterative)
+# --------------------------------------------------
+st.subheader("🔮 1-Year Forecast")
+
+last_row = df.iloc[-1:].copy()
+future_predictions = []
+
+for i in range(365):
+    X_last = last_row[features]
+    next_value = model.predict(X_last)[0]
+
+    future_predictions.append(next_value)
+
+    # Shift features
+    last_row["lag_30"] = last_row["lag_7"]
+    last_row["lag_7"] = last_row["lag_1"]
+    last_row["lag_1"] = next_value
+
+    last_row["roll_7"] = next_value
+    last_row["roll_30"] = next_value
+    last_row["diff_1"] = 0
+    last_row["diff_7"] = 0
+    last_row["std_7"] = 0
+    last_row["std_30"] = 0
+
+future_dates = pd.date_range(
+    start=df["Date"].iloc[-1] + pd.Timedelta(days=1),
+    periods=365
+)
+
+forecast_df = pd.DataFrame({
+    "Date": future_dates,
+    "Predicted SAR": future_predictions
+})
+
+st.line_chart(forecast_df.set_index("Date"))
+
+st.success("✅ App loaded successfully")
